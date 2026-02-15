@@ -194,12 +194,10 @@ integer function fopen(filename,recLen)
      open(newunit=fopen,file=filename,recl=rec_size,status='old')
      return
   else
-    if(present(recLen)) then
-      rec_size=recLen
-    else    
-      rec_size=512  
-    end if
-    open(newunit=fopen,file=filename,recl=rec_size,status='new')
+    print *, "ERROR: File not found: ", trim(filename)
+    print *, "Working directory: "
+    call execute_command_line("pwd")
+    stop "File reading error"
   end if
 end function
 

@@ -1,47 +1,90 @@
-# Build artifacts - temporary compilation files
+# Build artifacts
 *.o
 *.mod
+build/
+bin/
+lib/
+modules/
 
-# Generated output files
-*.out
+# Fortran compiled files
+*.smod
+*.a
+*.so
+*.dylib
+*.exe
 
-# Test output files only
-ReadFR/check/GENO_QC_*.geno
-ReadFR/check/GENO_QC_*.geno.gz
+# CMake generated files (keep CMakeLists.txt)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+*.cmake
 
-# Keep build directories and their important files
-# (executable, libraries, and module files are tracked)
+# Output files
+*.geno
+*.log
+*_output.txt
+nohup.out
 
-# Compiler-generated files
+# Backup files
+*~
+*.bak
+*.swp
+*.swo
+*#
 *.f90~
 *.f90.bak
 *.txt~
 
-# Test outputs
-test_output.txt
-*.tmp
+# Test data - EXCLUDE ALL LARGE FILES
+ReadFR/test/*.txt
+ReadFR/test/*.geno
 
-# IDE and editor files
+# But KEEP these small sample files
+!ReadFR/test/README.md
+!ReadFR/test/Sample_*.txt
+!ReadFR/test/PED_Total.txt
+!ReadFR/test/parameter*
+!ReadFR/test/*.sh
+!ReadFR/test/README*.txt
+
+# Old check directory - exclude completely
+ReadFR/check/
+
+# IDE files
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-.DS_Store
+*.code-workspace
 
-# OS-specific files
+# OS files
+.DS_Store
 Thumbs.db
+*.tmp
 .directory
 
-# Backup files
-*.bak
-*.backup
-*~
+# R files
+.Rhistory
+.RData
+.Rproj.user
 
-# Temporary files
-*.tmp
-*.temp
+# Compressed files
+*.tar.gz
+*.zip
+*.7z
+*.gz
+*.bz2
 
-# Large data files (keep examples only)
-ReadFR/check/GENO_QC_*
-*.geno
+# Documentation build
+docs/_build/
+docs/.doctrees/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary test outputs
+test_output*.txt
+test_*.geno
+GENO_*.geno

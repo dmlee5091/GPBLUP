@@ -18,15 +18,23 @@ program ReadFR
   type(PEDHashTable) :: PED
   type(PEDInfo) :: PED_REC
   type(SNPInfo),allocatable :: MapInfo(:)
+  logical :: file_exists
   
-  integer :: unitGENO, unitF, n, i, j, k1, k2
-  integer :: NREC, nSNP, NARN, tSNP, count_miss
-  integer :: countX(3), countY(3), countY_hetero_errors
-  integer :: total_animals, animals_retained, animals_low_callrate, snp_count
-  character(len=1) :: Allele1, Allele2
-  character(len=MAX_STR) :: GenoFileName
-  character(len=LEN_STR) :: Animal_ID, Animal_ARN, temp_str
+   integer :: unitGENO, unitF, n, i, j, k1, k2, animal_field_idx, snp_name_idx
+   integer :: NREC, nSNP, NARN, tSNP, count_miss
+   integer :: countX(3), countY(3), countY_hetero_errors
+   integer :: total_animals, animals_retained, animals_low_callrate, snp_count
+   integer :: valid_snp_total, invalid_snp_total, animal_seq_num
+   ! Pre-calculated field indices for performance (avoid repeated find_field_index calls)
+   integer :: idx_allele1, idx_allele2, idx_gc_score, idx_r_intensity
+   integer :: idx_gt_score, idx_cluster_sep
+   character(len=1) :: Allele1, Allele2
+   character(len=MAX_STR) :: GenoFileName
+   character(len=LEN_STR) :: Animal_ID, Animal_ARN, Previous_Animal, Sample_Name, temp_str
+   character(len=LEN_STR) :: Animal_Field_Name, Current_SNP_Name
+   logical :: snp_order_verified
   integer(kind=ki1) :: genotype
+  logical :: found_ped
   real :: call_rate_animal
   real :: thresh_min_gc, thresh_min_r, thresh_max_r
   real :: thresh_min_gt, thresh_min_cluster, thresh_min_callrate
@@ -38,84 +46,307 @@ program ReadFR
    print '(a)'
    call timestamp()
    print '(a)'
+   call timestamp()
+   print '(a)'
    
    call getarg(1,Par_File)
-   if((len_trim(Par_File)).lt.1) stop 'Input parameter file'
-
+   if((len_trim(Par_File)).lt.1) then
+      print *, "Usage: ReadFR <parameter_file>"
+      print *, ""
+      print *, "Example: ReadFR /home/dhlee/GPBLUP/ReadFR/check/parameter.gpblup"
+      stop 'Parameter file required'
+   end if
+   
+   ! Check if parameter file exists
+   inquire(file=trim(Par_File), exist=file_exists)
+   if (.not. file_exists) then
+      print *, "ERROR: Parameter file not found: ", trim(Par_File)
+      print *, "Please check the file path and try again."
+      stop
+   end if
+   
+   print *, "Reading parameter file: ", trim(Par_File)
    call read_parameters(Par_File)
    print*,"PED File Name=", trim(PEDFile%FileName)
    
    call M_readpar_get_thresholds(thresh_min_gc, thresh_min_r, thresh_max_r, &
                                  thresh_min_gt, thresh_min_cluster, thresh_min_callrate)
-   call load_ped_file(PED, NARN, unitF)
+   
+   ! Determine animal field name from parameter (ANIMAL_ARN or ANIMAL_ID)
+   ! Must do this BEFORE loading PED file so we know which key to use for hashing
+   animal_field_idx = find_field_index('ANIMAL_ARN', SNPFile%FieldName)
+   if (animal_field_idx > 0) then
+      Animal_Field_Name = 'ANIMAL_ARN'
+   else
+      animal_field_idx = find_field_index('ANIMAL_ID', SNPFile%FieldName)
+      if (animal_field_idx > 0) then
+         Animal_Field_Name = 'ANIMAL_ID'
+      else
+         stop 'ERROR: Neither ANIMAL_ARN nor ANIMAL_ID found in SNP file parameters'
+      end if
+   end if
+   print *, "Using field: ", trim(Animal_Field_Name)
+   
+   ! Now load PED file with dynamic hash key based on Animal_Field_Name
+   call load_ped_file(PED, NARN, unitF, Animal_Field_Name)
    call load_map_file(MapInfo, tSNP, unitF)
    call get_snp_dimensions(SNPFile, unitF, nSNP, NREC)
-   call initialize_qc_variables(total_animals, animals_retained, &
-                                animals_low_callrate, global_qc_counters)
-   call print_qc_criteria()
    
    call generate_output_filename(GenoFileName)
    unitGENO = 999
    open(unit=unitGENO, file=trim(GenoFileName), status='replace', action='write')
-   write(unitGENO,'(A)') 'Animal_ID BREED SIRE DAM SEX BDate LOC GENO(1-76756)'
+   write(unitGENO,'(A)') 'Animal_ID BREED SIRE DAM SEX BDate LOC GENO'
    
-   do i=1,NREC
-      GENO = 9_ki1
-      countY_hetero_errors = 0
-      call initialize_animal_variables(Animal_ID, genotype, count_miss, &
-                                       countX, countY, snp_count, local_qc_counters)
-      do j=1,nSNP
-         call readline(unitF,n,XC,XR,dlm_str=trim(SNPFile%Delim_char))
-         if (j == 1) then
-            call extract_animal_id(Animal_ARN, Animal_ID, PED_REC, PED, SNPFile, XC)
+   !====================================================================
+   ! Sequential Reading: Read file once, group by Animal
+   !====================================================================
+   unitF = fopen(trim(SNPFile%FileName))
+   do i=1, SNPFile%Header
+      call readline(unitF, n, XC, XR, dlm_str=trim(SNPFile%Delim_char))
+   end do
+   
+   total_animals = 0
+   animals_retained = 0
+   animals_low_callrate = 0
+   valid_snp_total = 0
+   invalid_snp_total = 0
+   animal_seq_num = 0
+   snp_order_verified = .false.
+   GENO = 9_ki1
+   countY_hetero_errors = 0
+   snp_count = 0
+   count_miss = 0
+   countX = 0
+   countY = 0
+   Previous_Animal = ''
+   
+   ! Pre-calculate all field indices for performance optimization
+   ! This avoids ~256 million repeated find_field_index calls in the main loop
+   snp_name_idx = find_field_index('SNP_NAME', SNPFile%FieldName)
+   if (snp_name_idx == 0) then
+      print *, "ERROR: SNP_NAME field not found in parameter file"
+      stop
+   end if
+   
+   idx_allele1 = find_field_index('ALLELE1_AB', SNPFile%FieldName)
+   idx_allele2 = find_field_index('ALLELE2_AB', SNPFile%FieldName)
+   idx_gc_score = find_field_index('GC_SCORE', SNPFile%FieldName)
+   idx_r_intensity = find_field_index('R_INTENSITY', SNPFile%FieldName)
+   idx_gt_score = find_field_index('GT_SCORE', SNPFile%FieldName)
+   idx_cluster_sep = find_field_index('CLUSTER_SEP', SNPFile%FieldName)
+   
+   print '(A)', "Field indices calculated - optimization enabled"
+   
+   do  ! Sequential read until EOF
+      call readline(unitF, n, XC, XR, dlm_str=trim(SNPFile%Delim_char))
+      if (n < 0) exit  ! EOF
+      
+      ! Extract Sample Name from SNP file based on parameter keyword
+      Sample_Name = trim(XC(SNPFile%FieldLoc(animal_field_idx)))
+      
+      ! When animal changes, output previous and reset
+      if (Sample_Name /= Previous_Animal .and. len_trim(Previous_Animal) > 0) then
+         animal_seq_num = animal_seq_num + 1
+         call calculate_call_rate(snp_count, count_miss, call_rate_animal)
+         if (call_rate_animal >= thresh_min_callrate) then
+            animals_retained = animals_retained + 1
+            valid_snp_total = valid_snp_total + (snp_count - count_miss)
+            ! Print animal statistics before writing to file
+            print '(A,I4,A,A,A,A,A,I6,A,I6,A,I6,A,F7.4,A)', &
+               'Animal[', animal_seq_num, '] ',trim(PED_REC%ID), ' (',trim(PED_REC%BREED), &
+               ') - Total SNPs: ', snp_count, ' Valid: ', (snp_count - count_miss), &
+               ' Invalid: ', count_miss, ' CallRate: ', call_rate_animal, ' RETAINED'
+            write(unitGENO,'(A,1X,A,1X,A,1X,A,1X,I1,1X,I8,1X,A,1X)', advance='no') &
+               trim(PED_REC%ID), trim(PED_REC%BREED), &
+               trim(PED_REC%SIRE), trim(PED_REC%DAM), &
+               PED_REC%SEX, PED_REC%BDate, trim(PED_REC%LOC)
+            do j=1, snp_count
+               write(unitGENO,'(I1)', advance='no') GENO(j)
+            end do
+            write(unitGENO, *)
+         else
+            animals_low_callrate = animals_low_callrate + 1
+            ! Print animal statistics for excluded animal
+            print '(A,A,A,A,A,I6,A,I6,A,I6,A,F7.4,A)', &
+               'Animal   ',trim(PED_REC%ID), ' (',trim(PED_REC%BREED), &
+               ') - Total SNPs: ', snp_count, ' Valid: ', (snp_count - count_miss), &
+               ' Invalid: ', count_miss, ' CallRate: ', call_rate_animal, ' EXCLUDED (Low CallRate)'
          end if
-         call extract_alleles_and_genotype(Allele1, Allele2, temp_str, genotype, &
-                                          SNPFile, XC, k1, k2)
-         call apply_snp_qc_filters(local_qc_metrics, local_qc_counters, MapInfo, &
-                                  XR, SNPFile, Allele1, Allele2, genotype, j)
-         call store_genotype(GENO, MapInfo, genotype, local_qc_metrics%pass_qc, j, count_miss)
-         if (local_qc_metrics%pass_qc .and. genotype /= 9_ki1) then
-            if(MapInfo(j)%Chr == 20) then
+         invalid_snp_total = invalid_snp_total + count_miss
+         GENO = 9_ki1
+      end if
+      
+      ! Initialize for new animal
+      if (Sample_Name /= Previous_Animal) then
+         ! Search PED using Sample_Name (can be ARN or ID depending on parameter)
+         found_ped = pht_search(PED, Sample_Name, PED_REC)
+         
+         if (found_ped) then
+            total_animals = total_animals + 1
+         end if
+         snp_count = 0
+         count_miss = 0
+         countX = 0
+         countY = 0
+         countY_hetero_errors = 0
+         Previous_Animal = Sample_Name
+      end if
+      
+      ! Process SNP data
+      snp_count = snp_count + 1
+      
+      ! Read SNP_NAME from FR file and verify against MAP file
+      Current_SNP_Name = trim(XC(SNPFile%FieldLoc(snp_name_idx)))
+      
+      ! Verify SNP order on first animal's first SNP
+      if (.not. snp_order_verified .and. snp_count == 1) then
+         if (trim(Current_SNP_Name) /= trim(MapInfo(snp_count)%SNP_ID)) then
+            print '(A)', "========================================"
+            print '(A)', "WARNING: SNP order mismatch detected!"
+            print '(A,A)', "  FR file first SNP: ", trim(Current_SNP_Name)
+            print '(A,A)', "  MAP file first SNP: ", trim(MapInfo(snp_count)%SNP_ID)
+            print '(A)', "  Please ensure correct MAP file is specified:"
+            print '(A)', "    - V2 FR files require MAP_V2.txt"
+            print '(A)', "    - K FR files require MAP_K.txt"
+            print '(A)', "========================================"
+            stop "ERROR: FR and MAP file mismatch"
+         else
+            snp_order_verified = .true.
+            print '(A)', "SNP order verified: FR and MAP files match"
+         end if
+      end if
+      
+      ! Extract alleles (using pre-calculated indices)
+      if (idx_allele1 > 0 .and. idx_allele2 > 0) then
+         Allele1 = XC(SNPFile%FieldLoc(idx_allele1))(1:1)
+         Allele2 = XC(SNPFile%FieldLoc(idx_allele2))(1:1)
+      else
+         cycle
+      end if
+      
+      ! Apply QC filters (using pre-calculated indices)
+      if (idx_gc_score > 0 .and. XR(SNPFile%FieldLoc(idx_gc_score)) < thresh_min_gc) then
+         count_miss = count_miss + 1
+         cycle
+      end if
+      
+      if (idx_r_intensity > 0) then
+         if (XR(SNPFile%FieldLoc(idx_r_intensity)) < thresh_min_r .or. &
+             XR(SNPFile%FieldLoc(idx_r_intensity)) > thresh_max_r) then
+            count_miss = count_miss + 1
+            cycle
+         end if
+      end if
+      
+      if (idx_gt_score > 0 .and. XR(SNPFile%FieldLoc(idx_gt_score)) < thresh_min_gt) then
+         count_miss = count_miss + 1
+         cycle
+      end if
+      
+      if (idx_cluster_sep > 0 .and. XR(SNPFile%FieldLoc(idx_cluster_sep)) < thresh_min_cluster) then
+         count_miss = count_miss + 1
+         cycle
+      end if
+      
+      ! Call genotype
+      if (Allele1 == Allele2) then
+         if (Allele1 == 'A') then
+            genotype = 0_ki1
+         elseif (Allele1 == 'B') then
+            genotype = 2_ki1
+         else
+            genotype = 9_ki1
+         end if
+      else if ((Allele1 == 'A' .and. Allele2 == 'B') .or. &
+               (Allele1 == 'B' .and. Allele2 == 'A')) then
+         genotype = 1_ki1
+      else
+         genotype = 9_ki1
+      end if
+      
+      ! Store genotype sequentially
+      ! Note: MAP file provides two address types:
+      !   - Array_All (Address_Total): Global position across all chromosomes (Chr, Position sorted)
+      !   - Array_Chr (Address_Chr): Position within each chromosome (nested sorting)
+      ! SNP data from FR file is stored in the order they appear in MAP file
+      if (genotype /= 9_ki1) then
+         GENO(snp_count) = genotype
+         
+         ! Sex chromosome check using current SNP's chromosome from MapInfo
+         ! snp_count corresponds to the sequential order in MAP file
+         if (snp_count <= tSNP) then
+            if (MapInfo(snp_count)%Chr == 20) then
                call check_Sex(genotype, countX)
-            elseif(MapInfo(j)%Chr == 21) then
-               ! Y 염색체: 이질 접합 필터링 (Y 염색체는 단일 사본이므로 hetero는 오류)
-               if(genotype == 1_ki1) then
-                  ! 이질 접합은 미싱으로 처리
-                  GENO(MapInfo(j)%Array_All) = 9_ki1
+            elseif (MapInfo(snp_count)%Chr == 21) then
+               if (genotype == 1_ki1) then
+                  GENO(snp_count) = 9_ki1
                   countY_hetero_errors = countY_hetero_errors + 1
                else
-                  ! 정상 유전자형 카운팅
                   call check_Sex(genotype, countY)
                end if
             end if
          end if
-         
-         snp_count = snp_count + 1
-      end do
-      
-      call calculate_call_rate(snp_count, count_miss, call_rate_animal)
-      call print_animal_statistics(i, Animal_ID, total_animals, animals_retained, &
-                                  animals_low_callrate, call_rate_animal, snp_count, &
-                                  count_miss, countX, countY, countY_hetero_errors, &
-                                  GENO, PED_REC, unitGENO, tSNP)
-      call accumulate_global_qc_stats(global_qc_counters, local_qc_counters, call_rate_animal)
+      else
+         count_miss = count_miss + 1
+      end if
    end do
+   
+   ! Output last animal
+   if (len_trim(Previous_Animal) > 0 .and. found_ped) then
+      animal_seq_num = animal_seq_num + 1
+      call calculate_call_rate(snp_count, count_miss, call_rate_animal)
+      if (call_rate_animal >= thresh_min_callrate) then
+         animals_retained = animals_retained + 1
+         valid_snp_total = valid_snp_total + (snp_count - count_miss)
+         ! Print animal statistics
+         print '(A,I4,A,A,A,A,A,I6,A,I6,A,I6,A,F7.4,A)', &
+            'Animal[', animal_seq_num, '] ',trim(PED_REC%ID), ' (',trim(PED_REC%BREED), &
+            ') - Total SNPs: ', snp_count, ' Valid: ', (snp_count - count_miss), &
+            ' Invalid: ', count_miss, ' CallRate: ', call_rate_animal, ' RETAINED'
+         write(unitGENO,'(A,1X,A,1X,A,1X,A,1X,I1,1X,I8,1X,A,1X)', advance='no') &
+            trim(PED_REC%ID), trim(PED_REC%BREED), &
+            trim(PED_REC%SIRE), trim(PED_REC%DAM), &
+            PED_REC%SEX, PED_REC%BDate, trim(PED_REC%LOC)
+         do j=1, snp_count
+            write(unitGENO,'(I1)', advance='no') GENO(j)
+         end do
+         write(unitGENO, *)
+      else
+         animals_low_callrate = animals_low_callrate + 1
+         ! Print animal statistics for excluded animal
+         print '(A,I4,A,A,A,A,A,I6,A,I6,A,I6,A,F7.4,A)', &
+            'Animal[', animal_seq_num, '] ',trim(PED_REC%ID), ' (',trim(PED_REC%BREED), &
+            ') - Total SNPs: ', snp_count, ' Valid: ', (snp_count - count_miss), &
+            ' Invalid: ', count_miss, ' CallRate: ', call_rate_animal, ' EXCLUDED (Low CallRate)'
+      end if
+      invalid_snp_total = invalid_snp_total + count_miss
+   end if
+   
    close(unit=unitGENO)
    print*, ""
    print*, "GENO file saved: "//trim(GenoFileName)
-   print*, "File format: OutputPrefix_YYYYMMDD_SequenceNumber.geno"
+   print*, "========================================"
+   print*, "Total animals processed: ", total_animals
+   print*, "Animals retained (Call Rate >= ", thresh_min_callrate, "): ", animals_retained
+   print*, "Animals excluded (Low Call Rate): ", animals_low_callrate
+   print*, "========================================"
+   print*, "Total Valid SNPs: ", valid_snp_total
+   print*, "Total Invalid SNPs: ", invalid_snp_total
+   print*, "========================================"
    close(unit=unitF)
-   call print_qc_summary(total_animals, animals_retained, animals_low_callrate, global_qc_counters)
 contains
-! Load PED file and populate hash table
-subroutine load_ped_file(PED, NARN, unitF)
+! Load PED file and populate hash table with dynamic hash key
+! Animal_Field_Name parameter controls whether to hash by ARN or ID
+subroutine load_ped_file(PED, NARN, unitF, Animal_Field_Name)
    type(PEDHashTable), intent(out) :: PED
    integer, intent(out) :: NARN, unitF
+   character(len=*), intent(in) :: Animal_Field_Name
    integer :: nrec_in_file, i, n
    
    NARN = N_recf(PEDFile%FileName)
    NARN = NARN - PEDFile%Header
    print*,"Total number of PED records to read=", NARN
+   print*,"Hash key field: ", trim(Animal_Field_Name)
    call pht_create(PED, int(NARN*1.3))
    unitF=fopen(trim(PEDFile%FileName))
    
@@ -132,26 +363,42 @@ subroutine load_ped_file(PED, NARN, unitF)
        PED_REC%BREED= trim(XC(PEDFile%FieldLoc(find_field_index('BREED',PEDFile%FieldName))))
        PED_REC%ID   = trim(XC(PEDFile%FieldLoc(find_field_index('ID',PEDFile%FieldName))))
        PED_REC%ARN  = trim(XC(PEDFile%FieldLoc(find_field_index('ARN',PEDFile%FieldName))))
-       ! Skip missing ARN
-       if (len_trim(PED_REC%ARN) == 0 .or. trim(PED_REC%ARN) == "0") cycle
+       
+       ! Determine hash key based on Animal_Field_Name parameter
+       if (trim(Animal_Field_Name) == 'ANIMAL_ARN') then
+           ! Use ARN as hash key (original behavior)
+           if (len_trim(PED_REC%ARN) == 0 .or. trim(PED_REC%ARN) == "0") cycle
+       else if (trim(Animal_Field_Name) == 'ANIMAL_ID') then
+           ! Use ID as hash key (new behavior for ID-based PED files)
+           if (len_trim(PED_REC%ID) == 0 .or. trim(PED_REC%ID) == "0") cycle
+       else
+           cycle  ! Skip if field name unknown
+       end if
+       
        PED_REC%SIRE = trim(XC(PEDFile%FieldLoc(find_field_index('SIRE',PEDFile%FieldName))))
        PED_REC%DAM  = trim(XC(PEDFile%FieldLoc(find_field_index('DAM',PEDFile%FieldName))))
        PED_REC%SEX  = XI(PEDFile%FieldLoc(find_field_index('SEX',PEDFile%FieldName)))      
        PED_REC%BDate= XI(PEDFile%FieldLoc(find_field_index('BDate',PEDFile%FieldName)))    
        ! Read LOC field as text string
        PED_REC%LOC  = adjustl(trim(XC(PEDFile%FieldLoc(find_field_index('LOC',PEDFile%FieldName)))))
-       call pht_insert(PED, PED_REC)
+       call pht_insert_with_key(PED, PED_REC, Animal_Field_Name)
    end do
    close(unit=unitF)
    
-   print*,"Total number of non-zero ARN records in hash table=", PED%count
+   print*,"Total number of ", trim(Animal_Field_Name), " records in hash table=", PED%count
    NARN = PED%count
 end subroutine load_ped_file
 ! Load MAP file with SNP information
+! Supports two MAP versions (V2 and K) with standardized array addressing:
+!   - ARRAY_ALL (Address_Total): SNPs ordered by Chr, Position across all chromosomes
+!   - ARRAY_CHR (Address_Chr): SNPs ordered within each chromosome (nested sorting)
+! This allows extraction of common SNPs from different MAP file types
 subroutine load_map_file(MapInfo, tSNP, unitF)
    type(SNPInfo), allocatable, intent(out) :: MapInfo(:)
    integer, intent(out) :: tSNP, unitF
    integer :: i, n
+   character(len=LEN_STR) :: first_snp_id
+   character(len=30) :: map_version
    
    tSNP = N_recf(trim(MAPFile%FileName))
    tSNP = tSNP - MAPFile%Header
@@ -168,10 +415,24 @@ subroutine load_map_file(MapInfo, tSNP, unitF)
        MapInfo(i)%SNP_ID    = trim(XC(MAPFile%FieldLoc(find_field_index('SNP_ID',MAPFile%FieldName))))
        MapInfo(i)%Chr       = XI(MAPFile%FieldLoc(find_field_index('Chr',MAPFile%FieldName)))
        MapInfo(i)%Pos       = XI(MAPFile%FieldLoc(find_field_index('Pos',MAPFile%FieldName)))
-       MapInfo(i)%Array_All = XI(MAPFile%FieldLoc(find_field_index('Array_All',MAPFile%FieldName)))
-       MapInfo(i)%Array_Chr = XI(MAPFile%FieldLoc(find_field_index('Array_Chr',MAPFile%FieldName)))
+       ! ARRAY_ALL: Address_Total (전체 SNP을 Chr, Position으로 순서화 - 모든 염색체 통합)
+       ! ARRAY_CHR: Address_Chr (염색체 내에서 nested 순서화)
+       MapInfo(i)%Array_All = XI(MAPFile%FieldLoc(find_field_index('ARRAY_ALL',MAPFile%FieldName)))
+       MapInfo(i)%Array_Chr = XI(MAPFile%FieldLoc(find_field_index('ARRAY_CHR',MAPFile%FieldName)))
    end do
    close(unit=unitF)
+   
+   ! Detect MAP version from first SNP ID format
+   first_snp_id = trim(MapInfo(1)%SNP_ID)
+   if (index(first_snp_id, 'ALGA') > 0 .or. index(first_snp_id, 'ASGA') > 0 .or. &
+       index(first_snp_id, 'DIAS') > 0 .or. index(first_snp_id, 'MARC') > 0) then
+      map_version = 'V2 (Porcine60K)'
+   else if (index(first_snp_id, '_') > 0) then
+      map_version = 'K (GGP-Porcine)'
+   else
+      map_version = 'Unknown'
+   end if
+   print '(A,A,A,A,A)', "MAP version detected: ", trim(map_version), " (First SNP: ", trim(first_snp_id), ")"
 end subroutine load_map_file
 ! Get SNP dimensions from file header
 subroutine get_snp_dimensions(SNPFile, unitF, nSNP, NREC)

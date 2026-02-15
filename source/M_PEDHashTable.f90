@@ -18,6 +18,7 @@ module M_PEDHashTable
   end type PEDHashTable
   
   public :: pht_create, pht_insert, pht_search, pht_delete, pht_free
+  public :: pht_insert_with_key
   public :: pht_print_stats, pht_get_prime_size
   
 contains
@@ -130,6 +131,59 @@ contains
     pht%table(hash_idx)%next => node
     pht%count = pht%count + 1
   end subroutine pht_insert
+
+  !**********************************************************************
+  ! PED 정보를 해시 테이블에 삽입 (키로 사용할 필드 지정 가능)
+  ! Arguments:
+  !   pht      - (inout) PED 해시 테이블
+  !   ped      - (in)    PED 정보
+  !   key_type - (in)    'ARN' 또는 'ID' - 키로 사용할 필드
+  !**********************************************************************
+  subroutine pht_insert_with_key(pht, ped, key_type)
+    type(PEDHashTable), intent(inout) :: pht
+    type(PEDInfo), intent(in) :: ped
+    character(len=*), intent(in) :: key_type
+    integer :: hash_idx
+    type(PEDHashNode), pointer :: node, current
+    character(len=LEN_STR) :: key_value
+    
+    ! 키로 사용할 값 결정
+    ! key_type은 'ANIMAL_ID', 'ANIMAL_ARN' 등의 형식
+    if (index(trim(key_type), 'ID') > 0 .and. index(trim(key_type), 'ARN') == 0) then
+      ! ANIMAL_ID인 경우 ID를 키로 사용
+      key_value = trim(ped%ID)
+    else if (index(trim(key_type), 'ARN') > 0) then
+      ! ANIMAL_ARN인 경우 ARN을 키로 사용
+      key_value = trim(ped%ARN)
+    else
+      ! 잘못된 key_type, 기본값으로 ARN 사용
+      key_value = trim(ped%ARN)
+    end if
+    
+    ! 빈 키는 스킵
+    if (len_trim(key_value) == 0 .or. trim(key_value) == "0") return
+    
+    hash_idx = hash_arn(trim(key_value), pht%size)
+    
+    ! 같은 키가 이미 존재하면 업데이트
+    current => pht%table(hash_idx)%next
+    do while (associated(current))
+      if (trim(current%ARN_key) == trim(key_value)) then
+        current%ped_data = ped
+        return
+      end if
+      if (.not. associated(current%next)) exit
+      current => current%next
+    end do
+    
+    ! 새로운 노드 추가
+    allocate(node)
+    node%ARN_key = trim(key_value)  ! 실제로는 ID나 ARN일 수 있음
+    node%ped_data = ped
+    node%next => pht%table(hash_idx)%next
+    pht%table(hash_idx)%next => node
+    pht%count = pht%count + 1
+  end subroutine pht_insert_with_key
 
   !**********************************************************************
   ! ARN을 키로 하여 PED 정보 검색

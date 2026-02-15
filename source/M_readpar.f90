@@ -24,9 +24,12 @@ CONTAINS
   subroutine read_parameters(Par_file)
  !   use M_Variables, only: PEDFile, DATAFile, SNPFile, MAPFile, MAX_STR, MAX_VAR
   character(len=*), intent(in) :: Par_file  
-  character(LEN=MAX_STR) :: XC(MAX_VAR), keyword_upper
+  character(LEN=MAX_STR) :: XC(MAX_VAR), keyword_upper, ParDir
   integer(kind=ki4) :: XI(MAX_VAR)
   integer:: n, unitF, ierr
+  
+  ! 파라미터 파일의 디렉토리 추출
+  ParDir = get_directory_path(Par_file)
   
   unitF=fopen(Par_file)
 
@@ -40,6 +43,7 @@ CONTAINS
            cycle
        case("PEDFILE:")
            PEDFile%FileName=XC(2)
+           PEDFile%FileName = resolve_file_path(ParDir, PEDFile%FileName)
            call readFileInfo(unitF, PEDFile, ierr)
            if (ierr /= 0) then
                print *, "ERROR: Failed to read PEDFILE info. Error code:", ierr
@@ -48,6 +52,7 @@ CONTAINS
            end if
        case("DATAFILE:")
            DATAFile%FileName=XC(2)
+           DATAFile%FileName = resolve_file_path(ParDir, DATAFile%FileName)
            call readFileInfo(unitF, DATAFile, ierr)
            if (ierr /= 0) then
                print *, "ERROR: Failed to read DATAFILE info. Error code:", ierr
@@ -56,6 +61,7 @@ CONTAINS
            end if
        case("SNPFILE:")
            SNPFile%FileName=XC(2)
+           SNPFile%FileName = resolve_file_path(ParDir, SNPFile%FileName)
            call readFileInfo(unitF, SNPFile, ierr)
            if (ierr /= 0) then
                print *, "ERROR: Failed to read SNPFILE info. Error code:", ierr
@@ -64,6 +70,7 @@ CONTAINS
            end if
        case("MAPFILE:")
            MAPFile%FileName=XC(2)
+           MAPFile%FileName = resolve_file_path(ParDir, MAPFile%FileName)
            call readFileInfo(unitF, MAPFile, ierr)
            if (ierr /= 0) then
                print *, "ERROR: Failed to read MAPFILE info. Error code:", ierr

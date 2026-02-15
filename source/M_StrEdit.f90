@@ -13,6 +13,7 @@ public strvec_to_r4, strvec_to_i4, strvec_to_num
 public remove_duplicate_spaces, split_string
 public is_str, is_letter, is_digit, is_numeric
 public FindDelim
+public get_directory_path, resolve_file_path, is_absolute_path
 public operator(+)
 
 INTERFACE OPERATOR (+)
@@ -1044,6 +1045,71 @@ end subroutine split_string
         end if
   end select  
   end function FindDelim
+
+! ========================================
+! 파일 경로 처리 함수들
+! ========================================
+
+function is_absolute_path(path) result(is_abs)
+  implicit none
+  character(len=*), intent(in) :: path
+  logical :: is_abs
+  
+  ! Unix/Linux 절대 경로: /로 시작
+  if (path(1:1) == '/') then
+    is_abs = .true.
+  else if (len_trim(path) > 1) then
+    ! Windows 절대경로: C:\, D:\ 등 (드물지만 지원)
+    if (path(2:2) == ':') then
+      is_abs = .true.
+    else
+      is_abs = .false.
+    end if
+  else
+    is_abs = .false.
+  end if
+end function is_absolute_path
+
+function get_directory_path(filepath) result(dirpath)
+  implicit none
+  character(len=*), intent(in) :: filepath
+  character(len=MAX_STR) :: dirpath
+  integer :: i, last_slash
+  
+  last_slash = 0
+  do i = len_trim(filepath), 1, -1
+    if (filepath(i:i) == '/') then
+      last_slash = i
+      exit
+    end if
+  end do
+  
+  if (last_slash > 0) then
+    dirpath = filepath(1:last_slash-1)
+  else
+    ! 디렉토리 부분이 없으면 현재 디렉토리 반환
+    dirpath = '.'
+  end if
+end function get_directory_path
+
+function resolve_file_path(base_dir, file_path) result(resolved_path)
+  implicit none
+  character(len=*), intent(in) :: base_dir, file_path
+  character(len=MAX_STR) :: resolved_path
+  
+  ! 절대 경로이면 그대로 반환
+  if (is_absolute_path(file_path)) then
+    resolved_path = trim(adjustl(file_path))
+  else
+    ! 상대 경로이면 기본 디렉토리를 기준으로 경로 구성
+    ! base_dir이 '.'이면 현재 디렉토리
+    if (trim(base_dir) == '.') then
+      resolved_path = trim(adjustl(file_path))
+    else
+      resolved_path = trim(adjustl(base_dir))//'/'//trim(adjustl(file_path))
+    end if
+  end if
+end function resolve_file_path
 
 end module M_StrEdit
 

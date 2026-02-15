@@ -1,8 +1,8 @@
 # Output file prefix
-   OUTPUTPREFIX: GENO_QC
+   OUTPUTPREFIX: GENO
 
-# SNP Select from FinalReport file
-   SNPFILE: PorcineSNP60_SJ_51th_595sp_DY_FinalReport.txt
+# SNP Select from FinalReport file (상대 경로 사용)
+   SNPFILE: PorcineSNP60_FinalReport.txt
    HEADER: 10 
    DELIM: TAB
    NO_VARIABLES: 11
