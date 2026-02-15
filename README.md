@@ -1,15 +1,15 @@
-# DKBLUPF90 - Genomic Selection Evaluation Platform
+# GPBLUP - Genomic Selection Evaluation Platform
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Language](https://img.shields.io/badge/language-Fortran%2090%2B-purple.svg)](https://fortran-lang.org/)
-[![Release](https://img.shields.io/badge/release-v1.0-brightgreen.svg)](https://github.com/dmlee5091/DKBLUPF90/releases)
+[![Release](https://img.shields.io/badge/release-v1.0-brightgreen.svg)](https://github.com/dmlee5091/GPBLUP/releases)
 [![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](https://www.linux.org/)
 
 **A High-Performance SNP Quality Control Pipeline for Genomic Breeding Values Evaluation**
 
 ## 🎯 Project Overview
 
-DKBLUPF90 is a comprehensive Fortran-based platform designed for genomic selection and breeding value evaluation. Developed as part of a **Genomic Breeding Value Assessment Program**, it provides a complete data pipeline for processing large-scale SNP genotyping data from Illumina platforms to prepare it for genomic selection analysis.
+GPBLUP is a comprehensive Fortran-based platform designed for genomic selection and breeding value evaluation. Developed as part of a **Genomic Breeding Value Assessment Program**, it provides a complete data pipeline for processing large-scale SNP genotyping data from Illumina platforms to prepare it for genomic selection analysis.
 
 The platform integrates:
 - **SNP Quality Control**: Comprehensive filtering and validation of genomic data
@@ -35,7 +35,7 @@ The main executable that processes Illumina GenomeStudio FinalReport files with 
 | **Processing** | Real-time QC with immediate feedback |
 | **Output** | GENO files (BLUPF90-compatible) |
 
-### DKBLUPF90 Library
+### GPBLUP Library
 Production-grade Fortran modules for genomic data processing:
 
 ```
@@ -101,8 +101,8 @@ QC Criteria Configuration:
 
 ### 1. Installation
 ```bash
-git clone https://github.com/dmlee5091/DKBLUPF90.git
-cd DKBLUPF90
+git clone https://github.com/dmlee5091/GPBLUP.git
+cd GPBLUP
 PREFIX=$HOME/.local ./install.sh
 ```
 
@@ -149,7 +149,7 @@ Complete documentation is available:
 ## 📊 Project Structure
 
 ```
-DKBLUPF90/
+GPBLUP/
 ├── source/                 # Fortran source modules
 │   ├── M_*.f90            # Core library modules
 │   └── Qsort4.f90         # Sorting algorithms
@@ -313,14 +313,14 @@ Contributions are welcome! Please feel free to:
 
 ## 📋 Citation
 
-If you use DKBLUPF90 in your research, please cite:
+If you use GPBLUP in your research, please cite:
 
 ```bibtex
-@software{dkblupf90_2026,
+@software{gpblup_2026,
   author = {Lee, Deukmin},
-  title = {DKBLUPF90: Genomic Selection Evaluation Platform},
+  title = {GPBLUP: Genomic Selection Evaluation Platform},
   year = {2026},
-  url = {https://github.com/dmlee5091/DKBLUPF90},
+  url = {https://github.com/dmlee5091/GPBLUP},
   note = {v1.0}
 }
 ```
